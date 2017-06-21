@@ -42,6 +42,8 @@ PICO8_BUILTINS = {
 
 
 class Lua():
+    REQUIRE_REGEX = re.compile('^require [\"\'](?P<path>.+)[\"\']\r?\n?$')
+
     """The Lua code for a game."""
     def __init__(self, version):
         """Initializer.
@@ -216,7 +218,7 @@ class BaseASTWalker():
 
     def _walk(self, node):
         """Walk a node by calling its handler.
-        
+
         Yields:
           Items returned or yielded by the handler.
         """

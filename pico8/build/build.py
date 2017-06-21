@@ -59,7 +59,7 @@ def do_build(args):
             # TODO: support .png files as gfx source
             if section == 'lua' and fn.endswith('.lua'):
                 with open(fn, 'rb') as infh:
-                    # TODO: support require() with .lua
+                    infh = expand_requirements([line for line in infh], [fn])
                     result.lua = lua.Lua.from_lines(
                         infh, version=game.DEFAULT_VERSION)
             else:
@@ -79,6 +79,7 @@ def do_build(args):
         observer = Observer()
         observer.schedule(handler, './', recursive=True)
         observer.start()
+        print('Watching for changes...')
 
         # allow the observer to run indefinitely (until Ctrl-C)
         try:
@@ -91,6 +92,24 @@ def do_build(args):
         observer.join()
 
     return 0
+
+
+def expand_requirements(lines, paths, from_line=0):
+    line_num = from_line
+    while line_num < len(lines):
+        line = lines[line_num]
+        match = lua.Lua.REQUIRE_REGEX.search(line.decode("utf-8"))
+        if match:
+            path = match.groupdict().get('path')
+            del lines[line_num]
+            if path not in paths:
+                # load the file content
+                paths.append(path)
+                with open(path, 'rb') as dependency:
+                    lines[line_num:line_num] = [dep_line for dep_line in dependency]
+        else:
+            line_num += 1
+    return lines
 
 
 def strip_watch_arg(args):
