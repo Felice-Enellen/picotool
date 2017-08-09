@@ -1,5 +1,12 @@
 import os
+import time
+from datetime import datetime
+from argparse import Namespace
 
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+
+from . import debounce
 from .. import util
 from ..game import game
 from ..lua import lua
@@ -52,7 +59,7 @@ def do_build(args):
             # TODO: support .png files as gfx source
             if section == 'lua' and fn.endswith('.lua'):
                 with open(fn, 'rb') as infh:
-                    # TODO: support require() with .lua
+                    infh = expand_requirements([line for line in infh], [fn])
                     result.lua = lua.Lua.from_lines(
                         infh, version=game.DEFAULT_VERSION)
             else:
@@ -66,4 +73,63 @@ def do_build(args):
     # TODO: allow overriding the label source for .p8.png
     result.to_file(filename=args.filename)
 
+    if getattr(args, 'watch', False):
+        # create the handler & observer
+        handler = BuildHandler(strip_watch_arg(args))
+        observer = Observer()
+        observer.schedule(handler, './', recursive=True)
+        observer.start()
+        print('Watching for changes...')
+
+        # allow the observer to run indefinitely (until Ctrl-C)
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            observer.stop()
+
+        # wait until the thread terminates
+        observer.join()
+
     return 0
+
+
+def expand_requirements(lines, paths, from_line=0):
+    line_num = from_line
+    while line_num < len(lines):
+        line = lines[line_num]
+        match = lua.Lua.REQUIRE_REGEX.search(line.decode("utf-8"))
+        if match:
+            path = match.groupdict().get('path')
+            del lines[line_num]
+            if path not in paths:
+                # load the file content
+                paths.append(path)
+                with open(path, 'rb') as dependency:
+                    lines[line_num:line_num] = [dep_line for dep_line in dependency]
+        else:
+            line_num += 1
+    return lines
+
+
+def strip_watch_arg(args):
+    arg_vals = vars(args)
+    del arg_vals["watch"]
+    return Namespace(**arg_vals)
+
+
+class BuildHandler(FileSystemEventHandler):
+    def __init__(self, build_args):
+        self.build_args = build_args
+        self.path = os.path.normpath(build_args.filename)
+        super(BuildHandler, self).__init__()
+
+    def on_any_event(self, event):
+        if os.path.normpath(event.src_path) != self.path:
+            self.do_debounced_build()
+
+    @debounce(1)
+    def do_debounced_build(self):
+        print("<{}> Changes detected, rebuilding {}".format(
+            datetime.now().strftime('%Y-%m-%d %H:%M:%S'), self.path))
+        do_build(self.build_args)
